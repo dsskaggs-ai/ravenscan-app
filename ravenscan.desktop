@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Raven Desktop
+GenericName=Document Scanner
+Comment=Control and scan with Raven Compact and Avision scanners
+Exec=ravenscan
+Icon=ravenscan
+Terminal=false
+Type=Application
+Categories=Office;Scanning;
+StartupNotify=true
+StartupWMClass=com.raven.RavenScan
+Keywords=scan;scanner;document;pdf;duplex;raven;avision;
