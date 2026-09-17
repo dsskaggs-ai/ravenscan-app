@@ -1,6 +1,6 @@
-# Raven Desktop for Linux (RavenScan)
+# RavenScan — Linux Desktop App for Raven Compact Scanners
 
-A modern, native desktop scanner application built specifically for the **Raven Compact Scanner** (Avision AD215 series) and compatible Avision scanners on Linux / Omarchy.
+**A native Linux desktop scanning app for the Raven Compact Scanner** (Avision AD215 / AD215W / AD215L) and compatible Avision scanners. Built with GTK4/Libadwaita for Linux (Arch/Omarchy and other distributions). No Raven cloud account needed — the original Raven Desktop was Electron + cloud-dependent; this talks to the hardware directly over USB.
 
 ---
 
