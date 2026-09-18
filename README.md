@@ -4,6 +4,8 @@
 
 ---
 
+![RavenScan screenshot](docs/screenshot.png)
+
 ## What We Discovered & Reverse-Engineered
 
 1. **Hardware Architecture:**
