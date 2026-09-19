@@ -1,0 +1,45 @@
+name: OCR Code Review
+on:
+  pull_request:
+    branches: [main, master]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install -g @alibaba-group/open-code-review
+      - name: Run OCR
+        env:
+          OCR_KEY: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+        run: |
+          ocr config set llm.url "https://api.z.ai/api/coding/paas/v4/"
+          ocr config set llm.auth_token "$OCR_KEY"
+          ocr config set llm.model "glm-5.3"
+          ocr config set llm.use_anthropic false
+          BASE=$(git merge-base origin/${{ github.base_ref }} ${{ github.sha }})
+          ocr review --from "$BASE" --to "${{ github.sha }}" --format json --output /tmp/ocr.json || true
+      - name: Comment findings
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let d = {};
+            try { d = JSON.parse(fs.readFileSync('/tmp/ocr.json', 'utf8')); } catch (e) {}
+            const cs = d.comments || [];
+            const body = cs.length
+              ? '**OCR Code Review** — ' + cs.length + ' finding(s)\n' +
+                cs.map(c => `- **' + (c.severity || '?') + '** ' + (c.path || '?') +
+                       ' L' + (c.start_line || '?') + ': ' + String(c.content || '').slice(0, 300)).join('\n')
+              : '**OCR Code Review** — clean, no findings.';
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
