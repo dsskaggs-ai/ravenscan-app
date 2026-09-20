@@ -75,7 +75,9 @@ class SettingsPanel(Gtk.Box):
         self.doc_name_row = Adw.EntryRow()
         self.doc_name_row.set_title("Document Name")
         self.doc_name_row.set_text(self.config.get("doc_name", "Scan"))
+        self._doc_name_save_id = None
         self.doc_name_row.connect("changed", self._on_doc_name_changed)
+        self.doc_name_row.connect("apply", self._on_doc_name_applied)
         self.file_group.add(self.doc_name_row)
 
         # Destination Folder Selector (Searchable ComboRow)
@@ -299,8 +301,22 @@ class SettingsPanel(Gtk.Box):
         self.set_destination(selected_dest["path"])
 
     def _on_doc_name_changed(self, entry):
+        """Updates config in memory; disk write debounced (500ms) to avoid a write per keystroke."""
         self.config["doc_name"] = entry.get_text().strip()
+        if self._doc_name_save_id is not None:
+            GLib.source_remove(self._doc_name_save_id)
+        self._doc_name_save_id = GLib.timeout_add(500, self._flush_doc_name)
+
+    def _flush_doc_name(self):
         ConfigManager.save(self.config)
+        self._doc_name_save_id = None
+        return GLib.SOURCE_REMOVE
+
+    def _on_doc_name_applied(self, entry):
+        """User pressed Enter — flush immediately, cancelling any pending debounce."""
+        if self._doc_name_save_id is not None:
+            GLib.source_remove(self._doc_name_save_id)
+        self._flush_doc_name()
 
     def _on_append_date_changed(self, switch, gparam):
         self.config["append_date"] = switch.get_active()
@@ -330,17 +346,27 @@ class SettingsPanel(Gtk.Box):
         def folder_selected_callback(dialog_obj, result):
             try:
                 folder = dialog_obj.select_folder_finish(result)
-                if folder:
-                    path = folder.get_path()
-                    if not path and folder.get_uri():
-                        path, _ = GLib.filename_from_uri(folder.get_uri())
-                    if path and os.path.isdir(path):
-                        self.set_destination(path)
-                        return
-            except Exception:
-                pass
+            except GLib.Error as err:
+                # Gtk.DialogError.DISMISSED == user cancelled; anything else is real
+                dismissed = getattr(Gtk.DialogError, "DISMISSED", 2)
+                if not (err.domain == "gtk-dialog-error-quark" and err.code == dismissed):
+                    print(f"Folder selection failed: {err}")
+                self._sync_combo_selection(self.save_dir)
+                return
 
-            # If user cancelled or failed, revert combo to active save_dir
+            if folder:
+                path = folder.get_path()
+                if not path and folder.get_uri():
+                    try:
+                        path, _ = GLib.filename_from_uri(folder.get_uri())
+                    except GLib.Error as err:
+                        print(f"Could not resolve folder URI: {err}")
+                        path = None
+                if path and os.path.isdir(path):
+                    self.set_destination(path)
+                    return
+
+            print("Folder selection returned no usable path; reverting")
             self._sync_combo_selection(self.save_dir)
 
         dialog.select_folder(self.parent_window, None, folder_selected_callback)
@@ -433,12 +459,14 @@ class SettingsPanel(Gtk.Box):
             self.device_row.set_subtitle("Please plug in Raven Compact via USB")
             self.status_badge.set_text("Offline")
             self.status_badge.remove_css_class("success")
+            self.status_badge.remove_css_class("warning")
             self.status_badge.add_css_class("error")
         elif not is_writable:
             self.device_row.set_title(device_name)
             self.device_row.set_subtitle(f"S/N: {serial} • USB Permissions Needed")
             self.status_badge.set_text("Permissions Needed")
             self.status_badge.remove_css_class("success")
+            self.status_badge.remove_css_class("error")
             self.status_badge.add_css_class("warning")
         else:
             self.device_row.set_title(device_name)
