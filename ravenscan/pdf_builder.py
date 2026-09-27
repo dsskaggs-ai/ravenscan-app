@@ -99,8 +99,13 @@ class PdfBuilder:
                     progress_cb(f"Performing OCR on page {i+1} of {len(pages)}...")
 
                 base_out = os.path.join(temp_dir, f"ocr_page_{i:03d}")
+                # Compress to JPEG q80 first: tesseract embeds its input image
+                # as-is, so feeding it the lossless PNG made ~16 MB/page PDFs.
+                # q80 is visually identical on text and ~12x smaller.
+                jpg = os.path.join(temp_dir, f"page_{i:03d}.jpg")
+                subprocess.run(["magick", p.image_path, "-quality", "80", jpg], check=True)
                 # tesseract input base_out -l eng pdf
-                cmd = ["tesseract", p.image_path, base_out, "-l", "eng", "--dpi", str(p.dpi), "pdf"]
+                cmd = ["tesseract", jpg, base_out, "-l", "eng", "--dpi", str(p.dpi), "pdf"]
                 subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 page_pdfs.append(f"{base_out}.pdf")
 

@@ -54,16 +54,19 @@ class MainWindow(Adw.ApplicationWindow):
         scan_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         scan_box.add_css_class("linked")
 
-        self.btn_scan_duplex = Gtk.Button(label="Scan Duplex")
-        self.btn_scan_duplex.set_icon_name("scanner-symbolic")
+        # One Scan button; side(s) come from the "Scan Source" setting.
+        # (GTK4 set_icon_name() replaces a button's label, which left the old
+        # duplex button as an unlabeled icon next to "Scan Single".)
+        self.btn_scan_duplex = Gtk.Button()
+        self.btn_scan_duplex.set_child(Adw.ButtonContent(icon_name="scanner-symbolic", label="Scan"))
         self.btn_scan_duplex.add_css_class("suggested-action")
-        self.btn_scan_duplex.set_tooltip_text("Scan both sides of pages in feeder")
-        self.btn_scan_duplex.connect("clicked", lambda b: self._start_scan(ScanSource.ADF_DUPLEX))
+        self.btn_scan_duplex.set_tooltip_text("Scan pages in the feeder using the Scan Source setting")
+        self.btn_scan_duplex.connect("clicked", lambda b: self._start_scan(None))
         scan_box.append(self.btn_scan_duplex)
 
+        # Kept (hidden) so existing enable/disable code still works.
         self.btn_scan_single = Gtk.Button(label="Scan Single")
-        self.btn_scan_single.set_tooltip_text("Scan single side of pages in feeder")
-        self.btn_scan_single.connect("clicked", lambda b: self._start_scan(ScanSource.ADF_SIMPLEX))
+        self.btn_scan_single.set_visible(False)
         scan_box.append(self.btn_scan_single)
 
         self.header_bar.pack_start(scan_box)
@@ -205,9 +208,11 @@ class MainWindow(Adw.ApplicationWindow):
 
         return True
 
-    def _start_scan(self, source: ScanSource):
+    def _start_scan(self, source=None):
         options = self.settings_panel.get_options()
-        options.source = source
+        if source is not None:
+            options.source = source
+        self._pages_before_scan = len(self.session.pages)
 
         self.btn_scan_duplex.set_sensitive(False)
         self.btn_scan_single.set_sensitive(False)
@@ -247,6 +252,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.btn_scan_duplex.set_sensitive(True)
         self.btn_scan_single.set_sensitive(True)
         self._update_status(f"Scan complete. Total pages: {len(self.session.pages)}")
+        # Auto-save to the destination folder when the scan added pages.
+        if self.session.pages and len(self.session.pages) > getattr(self, "_pages_before_scan", 0):
+            self._on_save_pdf_clicked(save_as=False)
 
     def _on_scan_error(self, err: str):
         self.spinner.stop()

@@ -5,12 +5,18 @@ Handles background scan execution, duplex sheet separation, and progress updates
 """
 
 import os
+import glob
 import time
 import shutil
 import tempfile
 import threading
 import subprocess
-from typing import Callable, Optional, Dict, Any, List
+from typing import Callable, Optional, Dict, Any, List, Tuple
+
+# The Raven Compact's rear sensor produces corrupted color data when the page
+# feeds at the fast speed used below 300 DPI. Always scan at >= 300 and scale
+# down afterwards if a lower resolution was requested.
+MIN_HW_DPI = 300
 
 from ravenscan.hardware import RavenHardware, ScannerStatus, ColorMode, ScanSource, PaperSize
 
@@ -102,19 +108,28 @@ class ScannerController:
                 return
 
             # Check if SANE scanimage is available and can drive the device
-            if shutil.which("scanimage"):
-                on_status("Connecting via SANE backend...")
-                success = self._run_sane_scan(options, temp_dir, on_status, on_page)
-                if success:
-                    on_status("Scan complete.")
-                    on_complete()
-                    return
+            if not shutil.which("scanimage"):
+                on_error(
+                    "Scanner hardware was detected, but no SANE scanning backend "
+                    "(scanimage) is installed. Install the 'sane' package to scan."
+                )
+                return
 
-            # Fallback to direct USB or simulation if device wasn't ready
-            on_status("Hardware ready. Processing feeder...")
-            self._run_simulation_scan(options, temp_dir, on_status, on_page)
-            on_status("Scan complete.")
-            on_complete()
+            on_status("Connecting via SANE backend...")
+            success = self._run_sane_scan(options, temp_dir, on_status, on_page)
+            if success:
+                on_status("Scan complete.")
+                on_complete()
+                return
+
+            # Hardware was detected but the real scan failed. Report this
+            # honestly instead of silently generating a placeholder document
+            # that looks like a real scan.
+            on_error(
+                "Scanner hardware was detected, but the scan failed via the SANE "
+                "backend. No document was created."
+                + (f"\n\nDetails: {self.last_error}" if getattr(self, "last_error", "") else "")
+            )
 
         except Exception as e:
             on_error(str(e))
@@ -134,29 +149,52 @@ class ScannerController:
             mode_str = "Color" if options.color_mode == ColorMode.COLOR else (
                 "Gray" if options.color_mode == ColorMode.GRAYSCALE else "Lineart"
             )
-            source_str = "ADF Duplex" if options.source == ScanSource.ADF_DUPLEX else "ADF Front"
-            out_pattern = os.path.join(temp_dir, "page_%03d.png")
+            duplex = options.source == ScanSource.ADF_DUPLEX
+            source_str = "ADF Duplex" if duplex else "ADF Front"
+            hw_dpi = max(options.resolution_dpi, MIN_HW_DPI)
+            # scanimage's PNG writer aborts at end-of-batch on this backend,
+            # so capture PNM and convert.
+            out_pattern = os.path.join(temp_dir, "page_%03d.pnm")
 
             cmd = [
                 "scanimage",
                 "-d", "avision",
                 "--mode", mode_str,
-                "--resolution", str(options.resolution_dpi),
+                "--resolution", str(hw_dpi),
                 "--source", source_str,
+                "-x", "216", "-y", "355",   # full legal; ADF stops at paper end
                 "--batch=" + out_pattern,
-                "--format=png",
+                "--format=pnm",
             ]
 
             on_status(f"Scanning at {options.resolution_dpi} DPI ({mode_str})...")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            if result.returncode == 0:
-                files = sorted(glob.glob(os.path.join(temp_dir, "page_*.png")))
-                for i, f in enumerate(files):
-                    side = "Front" if i % 2 == 0 else "Back"
-                    on_page(f, side)
-                return True
-        except Exception:
-            pass
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            raw = sorted(glob.glob(os.path.join(temp_dir, "page_*.pnm")))
+            if not raw:
+                self.last_error = (result.stderr or "").strip()[-500:]
+                return False
+
+            # Pages outlive this job's temp dir: the UI copies them on the GTK
+            # main loop, after the worker has already cleaned up temp_dir.
+            keep_dir = os.path.join(
+                os.path.expanduser("~/.cache/ravenscan/pages"),
+                time.strftime("%Y%m%d-%H%M%S"),
+            )
+            os.makedirs(keep_dir, exist_ok=True)
+            for i, f in enumerate(raw):
+                out = os.path.join(keep_dir, f"page_{i+1:03d}.png")
+                conv = ["magick", f]
+                if hw_dpi != options.resolution_dpi:
+                    conv += ["-resize", f"{100.0 * options.resolution_dpi / hw_dpi:.4f}%"]
+                conv += ["-density", str(options.resolution_dpi), out]
+                subprocess.run(conv, check=True)
+                if options.auto_deskew:
+                    subprocess.run(["magick", out, "-deskew", "40%", out], check=True)
+                side = ("Front" if i % 2 == 0 else "Back") if duplex else "Front"
+                on_page(out, side)
+            return True
+        except Exception as e:
+            self.last_error = str(e)
         return False
 
     def _run_simulation_scan(
