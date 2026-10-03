@@ -16,6 +16,7 @@ from ravenscan.scanner import ScannerController, ScanOptions
 from ravenscan.document import DocumentSession
 from ravenscan.pdf_builder import PdfBuilder
 from ravenscan.config import ConfigManager
+from ravenscan import watchdog
 from ravenscan.ui.preview import DocumentPreview
 from ravenscan.ui.thumbnails import ThumbnailStrip
 from ravenscan.ui.settings_panel import SettingsPanel
@@ -38,6 +39,8 @@ class MainWindow(Adw.ApplicationWindow):
 
         # Connect session events
         self.session.on_pages_changed = self._on_pages_changed
+
+        watchdog.start()
 
         # Initial hardware check and periodic polling
         self._poll_hardware()
@@ -208,7 +211,23 @@ class MainWindow(Adw.ApplicationWindow):
 
         return True
 
+    def _require_doc_name(self) -> bool:
+        """Returns True if a document name is set; otherwise tells the user."""
+        if self.settings_panel.get_doc_name():
+            return True
+        dialog = Adw.AlertDialog(
+            heading="Document Name Required",
+            body="Enter a document name before scanning. It is used as the PDF's file name.",
+        )
+        dialog.add_response("ok", "OK")
+        dialog.connect("response", lambda d, r: self.settings_panel.focus_doc_name())
+        dialog.present(self)
+        self._update_status("Enter a document name first.")
+        return False
+
     def _start_scan(self, source=None):
+        if not self._require_doc_name():
+            return
         options = self.settings_panel.get_options()
         if source is not None:
             options.source = source
@@ -243,9 +262,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.status_label.set_text(msg)
 
     def _add_page_to_session(self, img_path: str, side: str, dpi: int):
-        page = self.session.add_scanned_image(img_path, side=side, dpi=dpi)
-        self.thumbnail_strip.update_pages()
-        self.preview.display_page(page)
+        # add_scanned_image fires on_pages_changed, which already rebuilds the
+        # thumbnail strip and loads the preview; don't do that work twice.
+        self.session.add_scanned_image(img_path, side=side, dpi=dpi)
 
     def _on_scan_finished(self):
         self.spinner.stop()
@@ -264,9 +283,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_pages_changed(self):
         has_pages = len(self.session.pages) > 0
-        self.btn_save_pdf.set_sensitive(has_pages)
-        self.btn_save_as.set_sensitive(has_pages)
-        self.btn_clear.set_sensitive(has_pages)
+        can_save = has_pages and not getattr(self, "_saving", False)
+        self.btn_save_pdf.set_sensitive(can_save)
+        self.btn_save_as.set_sensitive(can_save)
+        self.btn_clear.set_sensitive(can_save)
         self.thumbnail_strip.update_pages()
         current_page = self.session.get_selected_page()
         self.preview.display_page(current_page)
@@ -319,40 +339,61 @@ class MainWindow(Adw.ApplicationWindow):
 
             dialog.save(self, None, on_save_as_finish)
         else:
-            # Direct save to chosen save_dir with document_name
-            ConfigManager.heal_mount_if_needed(options.save_dir)
-            os.makedirs(options.save_dir, exist_ok=True)
-            filename = PdfBuilder.generate_filename(
-                base_name=options.document_name,
-                append_date=options.append_date,
-                extension="pdf",
-                directory=options.save_dir
-            )
-            out_path = os.path.join(options.save_dir, filename)
-            self._execute_save(out_path, options)
+            if not self._require_doc_name():
+                return
+            # Direct save to chosen save_dir with document_name. The folder
+            # checks touch the rclone Drive mount, so they run in the worker.
+            self._execute_save(None, options)
 
-    def _execute_save(self, out_path: str, options: ScanOptions):
+    def _execute_save(self, out_path, options: ScanOptions):
+        # Snapshot the pages being saved so only these are removed afterwards,
+        # even if another scan adds pages while this save is running.
+        pages = list(self.session.pages)
+        self._saving = True
+        self.btn_save_pdf.set_sensitive(False)
+        self.btn_save_as.set_sensitive(False)
+        self.btn_clear.set_sensitive(False)
         self.spinner.start()
-        self._update_status(f"Saving '{os.path.basename(out_path)}'...")
+        self._update_status("Saving...")
 
         def save_worker():
             try:
                 def progress(msg):
                     GLib.idle_add(self._update_status, msg)
 
-                PdfBuilder.export_pdf(self.session.pages, out_path, ocr=options.ocr, progress_cb=progress)
+                path = out_path
+                if path is None:
+                    ConfigManager.heal_mount_if_needed(options.save_dir)
+                    os.makedirs(options.save_dir, exist_ok=True)
+                    filename = PdfBuilder.generate_filename(
+                        base_name=options.document_name,
+                        append_date=options.append_date,
+                        extension="pdf",
+                        directory=options.save_dir
+                    )
+                    path = os.path.join(options.save_dir, filename)
+
+                progress(f"Saving '{os.path.basename(path)}'...")
+                PdfBuilder.export_pdf(pages, path, ocr=options.ocr, progress_cb=progress)
+                DocumentSession.delete_source_files(pages)
 
                 def on_done():
+                    self._saving = False
                     self.spinner.stop()
-                    self.last_saved_pdf = out_path
+                    self.last_saved_pdf = path
+                    # Saved pages are done: drop them so the next scan starts fresh.
+                    self.session.remove_pages(pages)
+                    self.settings_panel.clear_doc_name()
                     self.btn_open_saved.set_visible(True)
                     self.btn_open_folder.set_visible(True)
-                    self._update_status(f"Saved: {os.path.basename(out_path)}")
+                    self._update_status(f"Saved: {os.path.basename(path)}")
 
                 GLib.idle_add(on_done)
             except Exception as e:
                 def on_err():
+                    self._saving = False
                     self.spinner.stop()
+                    self._on_pages_changed()
                     self._update_status(f"Save failed: {e}")
                 GLib.idle_add(on_err)
 

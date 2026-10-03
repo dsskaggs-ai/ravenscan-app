@@ -88,6 +88,7 @@ class DocumentSession:
         shutil.copyfile(file_path, dest_path)
 
         page = ScannedPage(dest_path, page_num, side=side, dpi=dpi)
+        page.source_path = file_path  # scanner's cached copy, deleted once saved
         self.pages.append(page)
         self.selected_index = len(self.pages) - 1
 
@@ -95,6 +96,26 @@ class DocumentSession:
             self.on_pages_changed()
 
         return page
+
+    @staticmethod
+    def delete_source_files(pages: List[ScannedPage]):
+        """Deletes the scanner's cached originals of these pages, plus any
+        scan-job folder left empty. Only call once the pages are safely saved."""
+        dirs = set()
+        for page in pages:
+            src = getattr(page, "source_path", None)
+            if not src:
+                continue
+            try:
+                os.remove(src)
+            except OSError:
+                pass
+            dirs.add(os.path.dirname(src))
+        for d in dirs:
+            try:
+                os.rmdir(d)  # only succeeds when empty
+            except OSError:
+                pass
 
     def get_selected_page(self) -> Optional[ScannedPage]:
         if 0 <= self.selected_index < len(self.pages):
@@ -144,7 +165,11 @@ class DocumentSession:
 
     def clear(self):
         """Clears all pages in the current session."""
-        for page in self.pages:
+        self.remove_pages(list(self.pages))
+
+    def remove_pages(self, pages: List[ScannedPage]):
+        """Removes the given pages (e.g. those just saved), keeping any others."""
+        for page in pages:
             try:
                 if os.path.exists(page.image_path):
                     os.remove(page.image_path)
@@ -152,8 +177,10 @@ class DocumentSession:
                     os.remove(page.thumbnail_path)
             except Exception:
                 pass
-        self.pages.clear()
-        self.selected_index = 0
+        doomed = {id(p) for p in pages}
+        self.pages = [p for p in self.pages if id(p) not in doomed]
+        self._renumber()
+        self.selected_index = max(0, len(self.pages) - 1)
         if self.on_pages_changed:
             self.on_pages_changed()
 

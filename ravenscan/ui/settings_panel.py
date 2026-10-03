@@ -74,7 +74,7 @@ class SettingsPanel(Gtk.Box):
         # Document Name Entry
         self.doc_name_row = Adw.EntryRow()
         self.doc_name_row.set_title("Document Name")
-        self.doc_name_row.set_text(self.config.get("doc_name", "Scan"))
+        self.doc_name_row.set_text(self.config.get("doc_name", ""))
         self._doc_name_save_id = None
         self.doc_name_row.connect("changed", self._on_doc_name_changed)
         self.doc_name_row.connect("apply", self._on_doc_name_applied)
@@ -311,6 +311,17 @@ class SettingsPanel(Gtk.Box):
         ConfigManager.save(self.config)
         self._doc_name_save_id = None
         return GLib.SOURCE_REMOVE
+
+    def get_doc_name(self) -> str:
+        return self.doc_name_row.get_text().strip()
+
+    def clear_doc_name(self):
+        """Empties the name after a save so each document gets a fresh one."""
+        self.doc_name_row.set_text("")
+        self._on_doc_name_applied(self.doc_name_row)
+
+    def focus_doc_name(self):
+        self.doc_name_row.grab_focus()
 
     def _on_doc_name_applied(self, entry):
         """User pressed Enter — flush immediately, cancelling any pending debounce."""
