@@ -25,7 +25,7 @@ and if it works, it's a total fix instead of a workaround.
 ## Hardware facts (all confirmed, not guesses)
 
 - Device: Raven Compact WiFi, USB `0638:3200`, rebadged Avision AD215W,
-  serial `B10343501C170497`, firmware rev 6.07.
+  firmware rev 6.07.
 - **Self-powered** (`bmAttributes = 0xc0`), not USB bus-powered — ruled out
   power starvation from hub/cable/port entirely. Its own external adapter
   is plugged in with the indicator light on.
@@ -249,7 +249,7 @@ Open issues:
 ## 2026-09-27 later: ghosting = both sides in one image
 The scanner always scans both sides, but the inquiry duplex bits are blank.
 SANE was reading front and back as a single page, so the two sides were
-overlaid (Shawn spotted this). Splitting rows/columns after the fact did not
+overlaid (spotted during testing). Splitting rows/columns after the fact did not
 work, so the fix has to be in the driver.
 Patch: force inquiry_duplex=1 and inquiry_duplex_interlaced=1 for 0638:3200.
 "ADF Duplex" is now offered.
@@ -308,7 +308,7 @@ with background whitening.
   exit 0, clean front + back, and it stops cleanly on "feeder out of documents". This is the build to install.
 - 18:09: the sheet stopped partway out of the exit rollers. object_position(REJECT_PAPER) is
   rejected by this unit. release_unit(s, 1) ("release paper", which upstream only sends on cancel)
-  after each sheet ejects it fully. Confirmed by Shawn.
+  after each sheet ejects it fully. Confirmed in testing.
 - FINAL build = libsane-avision.so.1.4.0.FINAL-2026-09-27 (all patches: sheetfed, no accessory
   probe, CHECK CONDITION->sense, duplex, EOF pipe close, eject). Install to
   /usr/lib/sane/libsane-avision.so.1.4.0. Use 300 dpi, Color, ADF Duplex.
@@ -317,5 +317,5 @@ with background whitening.
 - window.py: one "Scan" button that follows the Scan Source setting (the old duplex button had
   lost its label: GTK4 set_icon_name replaces the label). Auto-saves the PDF to save_dir after each scan.
 - pdf_builder.py: OCR path converts pages to JPEG q80 before tesseract. A 2-page legal duplex went
-  from 32 MB to 2.8 MB with identical searchable text (159 lines). Looks the same zoomed in; Shawn approved.
+  from 32 MB to 2.8 MB with identical searchable text (159 lines). Looks the same zoomed in.
 - Backups: *.bak-2026-09-27 next to each edited file.
