@@ -15,13 +15,13 @@ from typing import Dict, Any, List, Tuple
 CONFIG_DIR = os.path.expanduser("~/.config/ravenscan")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
-GDRIVE_DIR = os.path.expanduser("~/gdrive")
-GDRIVE_RAVEN_DIR = os.path.expanduser("~/gdrive/Raven Scans")
+GDRIVE_DIR = os.path.expanduser("~/GoogleDrive")
+GDRIVE_RAVEN_DIR = os.path.join(GDRIVE_DIR, "Raven Scans")
 LOCAL_SCAN_DIR = os.path.expanduser("~/Documents/Scans")
 
 
 def heal_mount_if_needed(path: str = None):
-    """Detects if the FUSE rclone mount at ~/gdrive has a dead socket and restarts it."""
+    """Detects if the FUSE rclone mount at ~/GoogleDrive has a dead socket and restarts it."""
     need_heal = False
     try:
         os.listdir(GDRIVE_DIR)
@@ -132,7 +132,7 @@ class ConfigManager:
 
     @classmethod
     def heal_mount_if_needed(cls, path: str = None):
-        """Detects if the FUSE rclone mount at ~/gdrive has a dead socket and restarts it."""
+        """Detects if the FUSE rclone mount at ~/GoogleDrive has a dead socket and restarts it."""
         heal_mount_if_needed(path)
 
     @classmethod
