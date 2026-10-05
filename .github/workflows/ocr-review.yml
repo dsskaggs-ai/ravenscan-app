@@ -34,7 +34,7 @@ jobs:
             const cs = d.comments || [];
             const body = cs.length
               ? '**OCR Code Review** — ' + cs.length + ' finding(s)\n' +
-                cs.map(c => `- **' + (c.severity || '?') + '** ' + (c.path || '?') +
+                cs.map(c => '- **' + (c.severity || '?') + '** ' + (c.path || '?') +
                        ' L' + (c.start_line || '?') + ': ' + String(c.content || '').slice(0, 300)).join('\n')
               : '**OCR Code Review** — clean, no findings.';
             await github.rest.issues.createComment({
